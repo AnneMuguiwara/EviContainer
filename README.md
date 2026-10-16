@@ -193,3 +193,27 @@ Consulta LICENSE.
 ## 👥 Autores
 
 Equipo 3 y contribuidores.
+## 💻 Probar en laptop junto con Evi (modo simulación)
+
+Sirve para probar el flujo completo sin el hardware de la Pi, usando el micrófono y la bocina de la laptop para Evi.
+
+1. Levanta Evi (repo RenovaAvatar) y abre el kiosko en `http://127.0.0.1:5173`.
+2. En esta carpeta, prepara el entorno (solo la primera vez):
+   ```
+   python -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements-laptop.txt
+   copy .env.example .env
+   ```
+3. En `.env` pon `SIMULATION_MODE=true` y tu `CONTAINER_TOKEN`.
+4. Corre `.venv\Scripts\python main.py` y usa la terminal:
+   - escribe el `code_identity` del usuario (o escanéalo con un lector QR USB tipo teclado)
+   - `f plastico` / `f aluminio` / `f carton` / `f vidrio` / `f basura` → simula un envase
+   - `f ?` → objeto no reconocido · `f` → foto + IA (si TensorFlow está instalado)
+   - `t` → terminar sesión · `salir` → apagar
+
+Evi saluda al usuario por su nombre, reacciona a cada envase y se despide con el resumen.
+El contenedor le avisa por `POST {EVI_URL}/avatar/container-event`; si Evi no está corriendo, el contenedor sigue funcionando igual.
+
+> ⚠️ En simulación los escaneos se registran en la API real con el `CONTAINER_TOKEN` configurado: usa un usuario y contenedor de prueba.
+
+En la Raspberry Pi no hace falta cambiar nada: con `SIMULATION_MODE=false` (valor por defecto) usa Picamera2, los Arduinos y el lector QR como siempre, y también avisa a Evi si corre en la misma Pi.

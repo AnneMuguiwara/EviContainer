@@ -1,0 +1,9 @@
+# Dependencias para probar el contenedor en una laptop (SIMULATION_MODE=true).
+# Sin TensorFlow ni Picamera2: la IA es opcional y la camara cae a webcam o fotos de prueba.
+# Si tu Python tiene soporte de TensorFlow, puedes instalar tambien: tensorflow
+python-dotenv
+requests
+pyserial
+numpy
+pillow
+opencv-python

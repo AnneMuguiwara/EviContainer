@@ -3,10 +3,7 @@ import time
 import logging
 import numpy as np
 from PIL import Image
-
-# Importar TensorFlow
 import tensorflow as tf
-
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -19,7 +16,16 @@ MODEL_TYPE = 'TFLITE'  # <-- ¡CAMBIA ESTO PARA PROBAR EL OTRO MODELO!
 
 # Ajusta estas clases según el orden exacto en el que entrenaste tu modelo.
 # Ej: Si la salida 0 es Aluminio, la 1 es Plastico, etc.
-CLASS_NAMES = ["Aluminio", "Plastico", "Otro"]
+# --- CONFIGURACIÓN FIJA ---
+# Actualiza esta lista con el orden exacto de tu entrenamiento
+# crushed_metal, crushed_plastic, metal, no_reciclable, plastic
+CLASS_NAMES = [
+    "aluminio",      # Índice 0 (o "metal")
+    "carton",        # Índice 1
+    "no reciclable", # Índice 2 (o "otro" / "basura")
+    "plastico",      # Índice 3
+    "vidrio"         # Índice 4
+]
 
 # Tamaño de imagen que espera tu modelo (Típicamente 224x224)
 TARGET_IMAGE_SIZE = (224, 224) 
@@ -44,13 +50,13 @@ class WasteClassifier:
         try:
             if self.model_type == 'KERAS':
                 # --- CARGA DEL MODELO .KERAS ---
-                model_path = os.path.join(settings.MODELS_DIR, "modelo_residuos_rpi_02.keras")
+                model_path = os.path.join(settings.MODELS_DIR, "modelo_residuos_rpi_V3_05.keras")
                 self.keras_model = tf.keras.models.load_model(model_path)
                 logger.info(f"Modelo KERAS cargado en {time.time() - inicio:.2f} segundos.")
                 
             elif self.model_type == 'TFLITE':
                 # --- CARGA DEL MODELO .TFLITE ---
-                model_path = os.path.join(settings.MODELS_DIR, "modelo_residuos_rpi_02.tflite")
+                model_path = os.path.join(settings.MODELS_DIR, "modelo_residuos_rpi_V3_05.tflite")
                 self.tflite_interpreter = tf.lite.Interpreter(model_path=model_path)
                 self.tflite_interpreter.allocate_tensors()
                 
@@ -64,18 +70,31 @@ class WasteClassifier:
             logger.critical(f"Error fatal al cargar el modelo de IA: {e}")
 
     def _preprocess_image(self, image_path: str) -> np.ndarray:
-        """Prepara la imagen para que el modelo la entienda."""
-        # 1. Abrir y redimensionar la imagen
+        """Prepara la imagen recortándola al centro y redimensionándola."""
+        # 1. Abrir la imagen
         img = Image.open(image_path).convert('RGB')
+        
+        # 2. Recorte Central (Center Crop) para evitar deformación
+        width, height = img.size
+        new_size = min(width, height) # Tomamos el lado más corto (720)
+        
+        left = (width - new_size) / 2
+        top = (height - new_size) / 2
+        right = (width + new_size) / 2
+        bottom = (height + new_size) / 2
+        
+        # Recortamos a un cuadrado perfecto (720x720 en este caso)
+        img = img.crop((left, top, right, bottom))
+        
+        # 3. Redimensionar a 224x224
         img = img.resize(TARGET_IMAGE_SIZE)
         
-        # 2. Convertir a Array de Numpy
+        # 4. Convertir a Array de Numpy (píxeles crudos 0-255)
+        # NO normalizar aquí: MobileNetV3 incluye su propia capa Rescaling
+        # interna que convierte 0-255 a [-1, 1]. Normalizar aquí la duplica.
         img_array = np.array(img, dtype=np.float32)
-        
-        # 3. Normalizar píxeles (de 0-255 a 0-1) - Ajusta esto si tu modelo no usó normalización
-        img_array = img_array / 255.0 
-        
-        # 4. Añadir la dimensión del batch (1, 224, 224, 3)
+
+        # 5. Añadir la dimensión del batch (1, 224, 224, 3)
         img_array = np.expand_dims(img_array, axis=0)
         return img_array
 
@@ -118,12 +137,14 @@ class WasteClassifier:
             logger.error(f"Error durante la predicción: {e}")
             return "Error de IA", 0.0
 
-    def is_recyclable(self, predicted_class: str, confidence: float, threshold: float = 0.60) -> bool:
-        """Determina si se aprueba el reciclaje basado en la predicción y un umbral de confianza."""
+    def is_recyclable(self, predicted_label: str, confidence: float, threshold: float = 0.60) -> bool:
+        """Determina si se aprueba el depósito del residuo basado en confianza y material."""
         if confidence < threshold:
-            logger.warning(f"Confianza baja ({confidence:.2f}). Se rechaza por seguridad.")
+            logger.warning(f"Confianza insuficiente ({confidence:.2f}). Rechazado.")
             return False
             
-        # Define aquí qué clases consideras reciclables válidas
-        clases_validas = ["Aluminio", "Plastico"] 
-        return predicted_class in clases_validas
+        # Clases que el contenedor está programado para aceptar (las 4 que dan puntos)
+        label_upper = predicted_label.upper()
+        clases_validas = ["ALUMINIO", "METAL", "PLASTICO", "CARTON", "VIDRIO"]
+        
+        return any(valid in label_upper for valid in clases_validas)

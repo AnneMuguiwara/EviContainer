@@ -17,3 +17,6 @@ __pycache__/
 
 # Fotos temporales
 data/images/*
+
+#Salida Temporal
+contenedor_inteligente.log

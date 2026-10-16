@@ -1,41 +1,47 @@
+# -*- coding: utf-8 -*-
 import requests
 import logging
-from typing import Tuple, Optional
 from config import settings
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("AuthService")
 
-def validate_token(token: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Valida el token contra la API remota.
-    Retorna una tupla (user_id, user_name) si es válido, o (None, None) si falla.
-    """
-    if not token:
-        return None, None
+# Centralizamos los headers requeridos por la API
+HEADERS = {
+    "X-Container-Token": settings.CONTAINER_TOKEN,
+    "Accept": "application/json"
+}
 
+def identify_user(code_identity):
+    """
+    Identifica al usuario mediante su código (QR/NFC).
+    Retorna un diccionario con el estado y los datos del usuario.
+    """
+    url = f"{settings.API_BASE_URL}/scans/identify"
+    payload = {"code_identity": code_identity}
+    
     try:
-        logger.info(f"Validando token con la API...")
-        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(url, json=payload, headers=HEADERS, timeout=10)
         
-        # Usamos la URL segura desde nuestro settings (.env)
-        response = requests.post(settings.API_AUTH_URL, headers=headers, timeout=20)
-
-        if response.status_code == 200:
-            data = response.json()
-            user = data.get("data", {}).get("user", {})
-            user_id = user.get("id")
-            user_name = user.get("name")
+        # Bloqueo crítico: Contenedor inactivo o token inválido
+        if response.status_code in (401, 403):
+            logger.critical("CONTENEDOR FUERA DE SERVICIO (Error 401/403).")
+            return {"status": "OUT_OF_SERVICE", "message": "Fuera de servicio"}
             
-            if user_id and user_name:
-                logger.info(f"Usuario validado correctamente: {user_name}")
-                return user_id, user_name
-            else:
-                logger.warning("La API respondió 200 OK pero faltan datos del usuario.")
-                return None, None
-        else:
-            logger.warning(f"Error de validación. HTTP {response.status_code}")
-            return None, None
-
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error de conexión con API de validación: {e}")
-        return None, None
+        # Código no existe en la base de datos
+        if response.status_code == 404:
+            logger.warning(f"Código no encontrado: {code_identity}")
+            return {"status": "NOT_FOUND", "message": "Código no reconocido"}
+            
+        body = response.json()
+        
+        # Errores de lógica (ej. 422 Cuenta desactivada)
+        if not body.get("success"):
+            logger.warning(f"Validación rechazada: {body.get('message')}")
+            return {"status": "ERROR", "message": body.get("message")}
+            
+        logger.info(f"Usuario validado: {body['data']['user']['name']}")
+        return {"status": "OK", "data": body["data"]}
+        
+    except requests.RequestException as e:
+        logger.error(f"Fallo de conexión en validación: {e}")
+        return {"status": "NETWORK_ERROR", "message": "Error de red"}

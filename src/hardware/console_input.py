@@ -33,12 +33,13 @@ QUIT_KEYS = {"q", "\x03"}  # q o Ctrl+C
 
 HELP_TEXT = """
 === MODO SIMULACIÓN (teclas, sin Enter) ===
+  Las teclas sirven aquí o con el navegador de Evi enfocado.
   Esperando usuario:  escanea el QR del usuario (lector serial o USB)
   En sesión:          1 plástico   2 aluminio   3 cartón   4 vidrio
                       5 no reciclable           0 no reconocido
                       f o espacio -> foto real + IA
                       t -> terminar sesión      h -> esta ayuda
-  En cualquier momento: q o Ctrl+C -> apagar el contenedor
+  En cualquier momento: q o Ctrl+C en esta terminal -> apagar el contenedor
 """
 
 
@@ -80,7 +81,8 @@ class ConsoleInput:
     """Lee el teclado en un hilo aparte y lo entrega al bucle principal."""
 
     def __init__(self):
-        self.keys: "queue.Queue[tuple[str, float]]" = queue.Queue()
+        # (tecla, hora en segundos, viene_del_kiosko)
+        self.keys: "queue.Queue[tuple[str, float, bool]]" = queue.Queue()
         self.code_buffer = ""
         self.last_code_key_at = 0.0
         self.thread = threading.Thread(target=self._reader, daemon=True)
@@ -91,7 +93,7 @@ class ConsoleInput:
 
     def _reader(self) -> None:
         try:
-            put = lambda key: self.keys.put((key, time.monotonic()))  # noqa: E731
+            put = lambda key: self.keys.put((key, time.time(), False))  # noqa: E731
             if not sys.stdin or not sys.stdin.isatty():
                 _read_lines(put)
             elif sys.platform == "win32":
@@ -101,17 +103,20 @@ class ConsoleInput:
         except Exception as e:  # noqa: BLE001 - el contenedor sigue sin teclado
             logger.error(f"No se pudo leer el teclado: {e}")
 
-    def _next_key(self, with_time: bool = False):
+    def feed(self, key: str, at: float) -> None:
+        """Tecla que llegó desde el kiosko de Evi (ver src/services/kiosk_keys.py)."""
+        self.keys.put((key, at, True))
+
+    def _next_key(self):
         try:
-            key, at = self.keys.get_nowait()
+            return self.keys.get_nowait()
         except queue.Empty:
-            return (None, 0.0) if with_time else None
-        return (key, at) if with_time else key
+            return (None, 0.0, False)
 
     def clear(self) -> None:
         """Descarta teclas pendientes (al empezar o terminar una sesión)."""
         self.code_buffer = ""
-        while self._next_key() is not None:
+        while self._next_key()[0] is not None:
             pass
 
     def read_code(self) -> Optional[str]:
@@ -120,7 +125,7 @@ class ConsoleInput:
         se teclee a mano (con pausas) se descarta: solo identifica el lector.
         """
         while True:
-            key, at = self._next_key(with_time=True)
+            key, at, from_kiosk = self._next_key()
             if key is None:
                 return None
             if self.code_buffer and at - self.last_code_key_at > SCANNER_KEY_GAP:
@@ -135,7 +140,8 @@ class ConsoleInput:
             if key in ("\b", "\x7f"):
                 self.code_buffer = self.code_buffer[:-1]
                 continue
-            if key == "\x03" or (key == "q" and not self.code_buffer):
+            # Solo la terminal apaga el contenedor; desde el kiosko no.
+            if not from_kiosk and (key == "\x03" or (key == "q" and not self.code_buffer)):
                 raise KeyboardInterrupt
             if key.isprintable():
                 self.code_buffer += key
@@ -146,11 +152,13 @@ class ConsoleInput:
         objeto es la clave de MATERIAL_KEYS; None significa foto real + IA.
         """
         while True:
-            key = self._next_key()
+            key, _, from_kiosk = self._next_key()
             if key is None:
                 return None
             key = key.lower()
             if key in QUIT_KEYS:
+                if from_kiosk:
+                    continue  # solo la terminal apaga el contenedor
                 raise KeyboardInterrupt
             if key in END_KEYS:
                 return ("TERMINAR", None)

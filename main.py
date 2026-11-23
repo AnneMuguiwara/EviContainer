@@ -17,7 +17,7 @@ from src.hardware.console_input import ConsoleInput
 # Importamos nuestros NUEVOS servicios de red
 from src.services.auth_service import identify_user
 from src.services.api_client import registrar_escaneo
-from src.services import evi_notifier
+from src.services import evi_notifier, kiosk_keys
 from src.ml import simulated_cnn
 
 # La IA depende de TensorFlow, que puede no estar disponible (p. ej. en una
@@ -133,6 +133,9 @@ def main():
     if settings.SIMULATION_MODE:
         consola = ConsoleInput()
         consola.start()
+        # Las teclas también llegan con el navegador de Evi enfocado.
+        if settings.EVI_NOTIFY_ENABLED:
+            kiosk_keys.start(consola.feed)
 
     fuera_de_servicio = False
 

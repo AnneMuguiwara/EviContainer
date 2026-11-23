@@ -39,6 +39,8 @@ class WasteClassifier:
         self.tflite_interpreter = None
         self.input_details = None
         self.output_details = None
+        # Ranking [(clase, prob)] de la última predicción, para el top-3 de Evi.
+        self.last_ranking = []
         
         self._load_model()
 
@@ -103,6 +105,7 @@ class WasteClassifier:
         Ejecuta la inferencia en la imagen dada.
         Retorna una tupla: (Nombre_del_Material, Porcentaje_de_Confianza)
         """
+        self.last_ranking = []
         if not os.path.exists(image_path):
             logger.error(f"La imagen {image_path} no existe.")
             return "Desconocido", 0.0
@@ -130,11 +133,16 @@ class WasteClassifier:
             confidence = probs[class_index]
             
             predicted_class = CLASS_NAMES[class_index] if class_index < len(CLASS_NAMES) else "Otro"
+            self.last_ranking = sorted(
+                ((name, float(p)) for name, p in zip(CLASS_NAMES, probs)),
+                key=lambda x: -x[1],
+            )
             
             return predicted_class, float(confidence)
 
         except Exception as e:
             logger.error(f"Error durante la predicción: {e}")
+            self.last_ranking = []
             return "Error de IA", 0.0
 
     def is_recyclable(self, predicted_label: str, confidence: float, threshold: float = 0.60) -> bool:

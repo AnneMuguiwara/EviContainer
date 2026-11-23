@@ -204,14 +204,13 @@ Sirve para probar el flujo completo sin el hardware de la Pi, usando el micrófo
    .venv\Scripts\python -m pip install -r requirements-laptop.txt
    copy .env.example .env
    ```
-3. En `.env` pon `SIMULATION_MODE=true` y tu `CONTAINER_TOKEN`.
-4. Corre `.venv\Scripts\python main.py` y usa la terminal:
-   - escribe el `code_identity` del usuario (o escanéalo con un lector QR USB tipo teclado)
-   - `f plastico` / `f aluminio` / `f carton` / `f vidrio` / `f basura` → simula un envase
-   - `f ?` → objeto no reconocido · `f` → foto + IA (si TensorFlow está instalado)
-   - `t` → terminar sesión · `salir` → apagar
+3. En `.env` pon `SIMULATION_MODE=true`, tu `CONTAINER_TOKEN`, el puerto del lector QR (`QR_SCANNER_PORT`, p. ej. `COM13`) y en `EVI_BRIDGE_KEY` la misma clave que `CONTAINER_BRIDGE_KEY` de RenovaAvatar.
+4. Corre `.venv\Scripts\python main.py`:
+   - **Identificación real:** escanea el QR del usuario con el lector (serial o USB tipo teclado) y el contenedor lo valida en Ecosort. Las teclas de material no funcionan hasta que hay sesión.
+   - **Material con una tecla, sin Enter** (CNN simulada): `1` plástico · `2` aluminio · `3` cartón · `4` vidrio · `5` no reciclable · `0` no reconocido
+   - `f` o espacio → foto real + IA (si TensorFlow está instalado) · `t` → terminar sesión · `h` → ayuda · `q` o Ctrl+C → apagar
 
-Evi saluda al usuario por su nombre, reacciona a cada envase y se despide con el resumen.
+Evi saluda al usuario por su nombre, muestra en el kiosko la tarjeta de lo que «vio» la CNN (material, confianza, top-3 y la etiqueta «Simulación» si se eligió con tecla), reacciona a cada envase y se despide con el resumen.
 El contenedor le avisa por `POST {EVI_URL}/avatar/container-event`; si Evi no está corriendo, el contenedor sigue funcionando igual.
 
 > ⚠️ En simulación los escaneos se registran en la API real con el `CONTAINER_TOKEN` configurado: usa un usuario y contenedor de prueba.

@@ -18,10 +18,11 @@ from src.hardware.console_input import ConsoleInput
 from src.services.auth_service import identify_user
 from src.services.api_client import registrar_escaneo
 from src.services import evi_notifier
+from src.ml import simulated_cnn
 
 # La IA depende de TensorFlow, que puede no estar disponible (p. ej. en una
 # laptop con una versión de Python sin soporte). En ese caso, en modo
-# simulación el material se elige desde la terminal.
+# simulación el material se elige con una tecla.
 try:
     from src.ml.classifier import WasteClassifier
 except Exception as e:  # noqa: BLE001 - cualquier fallo de import deja la IA desactivada
@@ -52,14 +53,8 @@ def strip_accents(s: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFD', s)
                    if unicodedata.category(c) != 'Mn')
 
-def mapear_ia_a_api(predicted_class, confidence):
-    """
-    Traduce la salida local de la IA a los slugs estrictos que acepta la API.
-    Si el modelo no está seguro (< 0.60), se envía 'other' para registrar el intento sin puntos.
-    """
-    if confidence < 0.60:
-        return "other"
-
+def material_slug(predicted_class):
+    """Traduce un nombre de clase de la IA al slug de la API (sin mirar la confianza)."""
     clase_limpia = strip_accents(predicted_class).upper()
 
     if "PLASTICO" in clase_limpia:
@@ -72,6 +67,33 @@ def mapear_ia_a_api(predicted_class, confidence):
         return "glass"
 
     return "other"
+
+
+def mapear_ia_a_api(predicted_class, confidence):
+    """
+    Traduce la salida local de la IA a los slugs estrictos que acepta la API.
+    Si el modelo no está seguro (< 0.60), se envía 'other' para registrar el intento sin puntos.
+    """
+    if confidence < 0.60:
+        return "other"
+    return material_slug(predicted_class)
+
+
+def top_k_para_evi(ranking, k=3):
+    """Las k clases más probables, en el formato del evento scan de Evi."""
+    return [{"material": material_slug(name), "confidence": round(prob, 3)} for name, prob in ranking[:k]]
+
+
+# Imagen de ejemplo que muestra el kiosko cuando el material se eligió con una
+# tecla (RenovaAvatar: frontend/public/sim-cnn/).
+SIM_IMAGES = {
+    "plastico": "plastic",
+    "aluminio": "aluminum",
+    "carton": "cardboard",
+    "vidrio": "glass",
+    "no reciclable": "other",
+    "desconocido": "unknown",
+}
 
 def main():
     logger.info("=== INICIANDO SISTEMA DEL CONTENEDOR INTELIGENTE ===")
@@ -87,7 +109,7 @@ def main():
     if WasteClassifier:
         ia_classifier = WasteClassifier() # Aquí se carga el modelo .tflite o .keras
     elif settings.SIMULATION_MODE:
-        logger.warning(f"IA no disponible ({CLASSIFIER_IMPORT_ERROR}). Usa 'f <material>' para clasificar a mano.")
+        logger.warning(f"IA no disponible ({CLASSIFIER_IMPORT_ERROR}). Elige el material con las teclas 1-5 y 0.")
     else:
         logger.critical(f"No se pudo cargar la IA ({CLASSIFIER_IMPORT_ERROR}). Los objetos se rechazarán.")
 
@@ -100,9 +122,13 @@ def main():
         logger.critical("El Arduino de Sensores/Pantalla es crítico y no conectó.")
 
     motores.connect() # Si falla, ArduinoManager ya maneja el modo simulación
-    escaner_qr.connect()
+    if not escaner_qr.connect():
+        logger.warning(
+            f"Sin lector QR serial en {settings.QR_SCANNER_PORT}. Solo funcionará un lector USB tipo teclado."
+        )
 
-    # En simulación, la terminal sustituye al lector QR y al Arduino de sensores.
+    # En simulación, el teclado sustituye al Arduino de sensores (teclas de
+    # material); el usuario se identifica siempre con el lector QR.
     consola = None
     if settings.SIMULATION_MODE:
         consola = ConsoleInput()
@@ -117,9 +143,11 @@ def main():
         while not fuera_de_servicio:
             logger.info("--- FASE 1: ESPERANDO USUARIO (QR) ---")
             escaner_qr.flush()
+            if consola:
+                consola.clear()
             code_identity = None
 
-            # Esperar lectura de código (QR, Barras, NFC) o, en simulación, de la terminal
+            # Esperar lectura de código (QR, Barras, NFC): lector serial o USB tipo teclado
             while not code_identity:
                 code_identity = escaner_qr.read_token()
                 if not code_identity and consola:
@@ -164,16 +192,18 @@ def main():
 
             # --- FASE 2: SESIÓN DE RECICLAJE ACTIVA ---
             logger.info(f"--- FASE 2: SESIÓN ACTIVA PARA {user_data['name']} ---")
+            if consola:
+                consola.clear()
+                logger.info("Teclas: 1 plástico, 2 aluminio, 3 cartón, 4 vidrio, 5 no reciclable, 0 no reconocido, t terminar.")
             session_active = True
 
             while session_active:
-                forced_class = None
-                forced_confidence = None
+                forced_object = None
                 arduino_msg = sensores.read_line()
                 if not arduino_msg and consola:
                     console_event = consola.read_event()
                     if console_event:
-                        arduino_msg, forced_class, forced_confidence = console_event
+                        arduino_msg, forced_object = console_event
                 if not arduino_msg:
                     time.sleep(0.1)
                     continue
@@ -187,15 +217,19 @@ def main():
                     filepath = take_photo(camera)
 
                     if filepath:
-                        # 🧠 INFERENCIA LOCAL DE IA (o material forzado desde la terminal)
-                        if forced_class:
-                            predicted_class, confidence = forced_class, forced_confidence
-                            logger.info(f"[Simulación] Material forzado: {predicted_class} (Confianza: {confidence:.2f})")
+                        # 🧠 INFERENCIA LOCAL DE IA (o CNN simulada si se eligió con una tecla)
+                        if forced_object:
+                            predicted_class, confidence, ranking = simulated_cnn.simulate(forced_object)
+                            logger.info(
+                                f"[Simulación] Objeto: {forced_object} -> CNN simulada: {predicted_class} "
+                                f"(Confianza: {confidence:.2f})"
+                            )
                         elif ia_classifier:
                             predicted_class, confidence = ia_classifier.predict(filepath)
+                            ranking = ia_classifier.last_ranking
                             logger.info(f"IA Predice: {predicted_class} (Confianza: {confidence:.2f})")
                         else:
-                            hint = " Usa 'f <material>' (plastico, aluminio, carton, vidrio, basura)." if consola else ""
+                            hint = " Elige el material con las teclas 1-5 y 0." if consola else ""
                             logger.error(f"IA no disponible.{hint}")
                             sensores.send_command("RECHAZADO")
                             continue
@@ -241,6 +275,10 @@ def main():
                             accepted=reason is None,
                             reason=reason,
                             registered=api_result["status"] == "OK",
+                            confidence=round(confidence, 3),
+                            top_k=top_k_para_evi(ranking),
+                            simulated=bool(forced_object),
+                            **({"image": f"/sim-cnn/{SIM_IMAGES[forced_object]}.svg"} if forced_object else {}),
                             **scan_info,
                         )
 
@@ -275,6 +313,8 @@ def main():
                     session_active = False
                     # Evi se despide y guarda el resumen de la visita
                     evi_notifier.notify("session_end", code_identity)
+                    if consola:
+                        consola.clear()
 
     except KeyboardInterrupt:
         logger.info("Programa detenido manualmente por el operador (Ctrl+C).")

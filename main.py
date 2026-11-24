@@ -199,6 +199,9 @@ def main():
                 consola.clear()
                 logger.info("Teclas: 1 plástico, 2 aluminio, 3 cartón, 4 vidrio, 5 no reciclable, 0 no reconocido, t terminar.")
             session_active = True
+            # Con hardware, el Arduino de sensores cierra la sesión por
+            # inactividad; en simulación no hay Arduino, así que se cierra aquí.
+            ultima_actividad = time.time()
 
             while session_active:
                 forced_object = None
@@ -207,9 +210,20 @@ def main():
                     console_event = consola.read_event()
                     if console_event:
                         arduino_msg, forced_object = console_event
+                if (
+                    not arduino_msg
+                    and consola
+                    and settings.SIM_SESSION_TIMEOUT > 0
+                    and time.time() - ultima_actividad > settings.SIM_SESSION_TIMEOUT
+                ):
+                    logger.info(
+                        f"[Simulación] Sin actividad en {settings.SIM_SESSION_TIMEOUT:.0f} s: se cierra la sesión."
+                    )
+                    arduino_msg = "TERMINAR"
                 if not arduino_msg:
                     time.sleep(0.1)
                     continue
+                ultima_actividad = time.time()
 
                 if "Info:" in arduino_msg:
                     logger.info(f"[Sensores] {arduino_msg}")

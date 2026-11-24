@@ -39,6 +39,7 @@ HELP_TEXT = """
                       5 no reciclable           0 no reconocido
                       f o espacio -> foto real + IA
                       t -> terminar sesión      h -> esta ayuda
+                      (sin teclas por SIM_SESSION_TIMEOUT s, se cierra sola)
   En cualquier momento: q o Ctrl+C en esta terminal -> apagar el contenedor
 """
 

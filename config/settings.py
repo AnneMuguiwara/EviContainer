@@ -31,6 +31,9 @@ SIMULATION_MODE = os.getenv("SIMULATION_MODE", "false").lower() == "true"
 CAMERA_MODE = os.getenv("CAMERA_MODE", "auto").lower()
 WEBCAM_INDEX = int(os.getenv("WEBCAM_INDEX", 0))
 SAMPLE_IMAGES_DIR = os.getenv("SAMPLE_IMAGES_DIR", os.path.join(BASE_DIR, "dataset_capturas"))
+# Segundos sin teclas para cerrar solo la sesión en simulación (con hardware lo
+# hace el Arduino de sensores). 0 = solo se cierra con la tecla t.
+SIM_SESSION_TIMEOUT = float(os.getenv("SIM_SESSION_TIMEOUT", 60))
 
 # --- PUENTE CON EVI (backend de RenovaAvatar en la misma máquina) ---
 EVI_NOTIFY_ENABLED = os.getenv("EVI_NOTIFY_ENABLED", "true").lower() == "true"
